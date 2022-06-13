@@ -36,7 +36,7 @@ def createPipeline():
 
     outputDepth = True
     outputRectified = False
-    lrcheck = False
+    lrcheck = True
     subpixel = False
 
     # Create outputs
@@ -51,10 +51,10 @@ def createPipeline():
     xinSpatialCalcConfig.setStreamName("spatialCalcConfig")
 
     # StereoDepth
-    stereo.setOutputDepth(outputDepth)
-    stereo.setOutputRectified(outputRectified)
-    stereo.setConfidenceThreshold(255)
-
+    # stereo.setOutputDepth(outputDepth)
+    # stereo.setOutputRectified(outputRectified)
+    stereo.initialConfig.setConfidenceThreshold(255)
+    # stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
     stereo.setLeftRightCheck(lrcheck)
     stereo.setSubpixel(subpixel)
 
@@ -67,7 +67,7 @@ def createPipeline():
     topLeft = dai.Point2f(0.4, 0.4)
     bottomRight = dai.Point2f(0.8, 0.8)
 
-    spatialLocationCalculator.setWaitForConfigInput(False)
+    spatialLocationCalculator.inputConfig.setWaitForMessage(False)
     config = dai.SpatialLocationCalculatorConfigData()
     config.depthThresholds.lowerThreshold = 100
     config.depthThresholds.upperThreshold = 10000
@@ -91,13 +91,14 @@ def baseDepthEstimation(pipeline, topLeft, bottomRight, config):
         start = st.button('Start Calibration')
 
     # Pipeline is defined, now we can connect to the device
-    with dai.Device(pipeline) as device:
-        device.startPipeline()
+    with dai.Device() as device:
+        device.startPipeline(pipeline)
 
         # Output queue will be used to get the depth frames from the outputs defined above
         depthQueue = device.getOutputQueue(name="depth", maxSize=4, blocking=False)
         spatialCalcQueue = device.getOutputQueue(name="spatialData", maxSize=4, blocking=False)
         spatialCalcConfigInQueue = device.getInputQueue("spatialCalcConfig")
+        rgb = device.getOutputQueue('preview', maxSize=4, blocking=False)
 
         color = (255, 255, 255)
         noFrames = 0
@@ -111,7 +112,7 @@ def baseDepthEstimation(pipeline, topLeft, bottomRight, config):
         while True:
             inDepth = depthQueue.get()  # Blocking call, will wait until a new data has arrived
             inDepthAvg = spatialCalcQueue.get()  # Blocking call, will wait until a new data has arrived
-            preview = device.getOutputQueue('preview').get()
+            preview = rgb.get()
 
             img = preview.getFrame()
 
@@ -123,7 +124,7 @@ def baseDepthEstimation(pipeline, topLeft, bottomRight, config):
             spatialData = inDepthAvg.getSpatialLocations()
             for depthData in spatialData:
                 roi = depthData.config.roi
-                roi = roi.denormalize(width=depthFrameColor.shape[ 1 ], height=depthFrameColor.shape[ 0 ])
+                roi = roi.denormalize(width=depthFrameColor.shape[1], height=depthFrameColor.shape[0])
                 xmin = int(roi.topLeft().x)
                 ymin = int(roi.topLeft().y)
                 xmax = int(roi.bottomRight().x)
@@ -180,19 +181,18 @@ def baseDepthEstimation(pipeline, topLeft, bottomRight, config):
 
 
 def midpoint(ptA, ptB):
-    return ((ptA[ 0 ] + ptB[ 0 ]) * 0.5, (ptA[ 1 ] + ptB[ 1 ]) * 0.5)
+    return ((ptA[0] + ptB[0]) * 0.5, (ptA[1] + ptB[1]) * 0.5)
 
 
 # start the main codes
 def main(baseDepth):
-    col1, col2 = st.beta_columns([ 2, 1 ])
+    col1, col2 = st.beta_columns([2, 1])
     with col1:
         calc = st.button('Calculate Dimensions')
     with col2:
         st.text('Depth Map')
 
     with dai.Device(pipeline) as device:
-        device.startPipeline()
         frameST = col1.empty()
         frameST2 = col2.empty()
         frameST3 = col2.empty()
@@ -238,7 +238,7 @@ def main(baseDepth):
             cnts = cv2.findContours(edged.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             cnts = imutils.grab_contours(cnts)
             if len(cnts) > 0:
-                cnts = contours.sort_contours(cnts)[ 0 ]
+                cnts = contours.sort_contours(cnts)[0]
             # color for each edge in case of rectangular bounding box
             colors = ((0, 0, 255), (240, 0, 159), (255, 0, 0), (255, 255, 0))
 
@@ -246,8 +246,8 @@ def main(baseDepth):
             for (i, c) in enumerate(cnts):
 
                 # if the contour is not sufficiently large, ignore it
-                if cv2.contourArea(c) < 1000:
-                    continue
+                # if cv2.contourArea(c) < 1000:
+                #     continue
 
                 # we are looking for only one package, detect object #1 contours
                 if (i + 1) == 1:
@@ -255,7 +255,7 @@ def main(baseDepth):
                     box = cv2.minAreaRect(c)
                     box = cv2.boxPoints(box)
                     box = np.array(box, dtype="int")
-                    cv2.drawContours(org, [ box ], -1, (0, 255, 0), 2)
+                    cv2.drawContours(org, [box], -1, (0, 255, 0), 2)
                     # show the coordinates
                     print("Object #{}:".format(i + 1))
 
@@ -264,8 +264,8 @@ def main(baseDepth):
                     # order, then draw the outline of the rotated bounding
                     rect = perspective.order_points(box)
                     # compute the center of the bounding box
-                    cX = int(np.average(box[ :, 0 ]))
-                    cY = int(np.average(box[ :, 1 ]))
+                    cX = int(np.average(box[:, 0]))
+                    cY = int(np.average(box[:, 1]))
 
                     print(rect.astype("int"))
                     print("")
@@ -297,15 +297,15 @@ def main(baseDepth):
 
                     # draw the object num at the top-left corner
                     cv2.putText(org, "Object #{}".format(i + 1),
-                                (int(rect[ 0 ][ 0 ] - 15), int(rect[ 0 ][ 1 ] - 15)),
+                                (int(rect[0][0] - 15), int(rect[0][1] - 15)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
 
                     # calculate depth for detected contours 'rect[][]'
                     for depthData in spatialData:
-                        xmin = int(rect[ 0 ][ 0 ])
-                        ymin = int(rect[ 0 ][ 1 ])
-                        xmax = int(rect[ 2 ][ 0 ])
-                        ymax = int(rect[ 2 ][ 1 ])
+                        xmin = int(rect[0][0])
+                        ymin = int(rect[0][1])
+                        xmax = int(rect[2][0])
+                        ymax = int(rect[2][1])
 
                         fontType = cv2.FONT_HERSHEY_TRIPLEX
                         cv2.rectangle(depthFrameColor, (xmin, ymin), (xmax, ymax), color,
@@ -354,7 +354,7 @@ def main(baseDepth):
 pipeline, topLeft, bottomRight, config = createPipeline()
 
 st.sidebar.title("OAK-D Warehouse Management")
-option = st.sidebar.selectbox('Select', [ 'None', 'Base Depth Load', 'Measure Dimensions' ])
+option = st.sidebar.selectbox('Select', ['None', 'Base Depth Load', 'Measure Dimensions'])
 
 if option == 'None':
     st.sidebar.image('./Images/Measure.gif')
